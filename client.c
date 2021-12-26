@@ -86,7 +86,7 @@ void establish_connection(int socket, struct sockaddr_in *client_address)
 
 }
 
-void process_address(struct sockaddr_in *server_address, struct sockaddr_in *client_address, int server_port_number)
+void process_address(struct sockaddr_in *server_address, struct sockaddr_in *client_address, int server_port_number, int client_port_number)
 {
 	/*
 
@@ -106,10 +106,16 @@ void process_address(struct sockaddr_in *server_address, struct sockaddr_in *cli
 	memset(client_address, 0, sizeof(client_address));
 
 
-	// Fill the informations for server address
+	// Fill the information for server address
 	server_address->sin_family = AF_INET;
 	server_address->sin_addr.s_addr = INADDR_ANY;
 	server_address->sin_port = htons(server_port_number);	
+
+	// Fill the information for client address
+	client_address->sin_family = AF_INET;
+	client_address->sin_addr.s_addr = INADDR_ANY;
+	client_address->sin_port = htons(client_port_number);	
+
 
 	return;
 }
@@ -137,6 +143,10 @@ void recieve_packet(int socket, struct sockaddr_in *server_address, char* buffer
 	// In order to send and recieve message in dynamic manner, we take the actual code inside a infinite loop.
 	while (1)
 	{
+
+		printf("Enter a message:");
+		fgets(message, MAXLINE, stdin);
+
 		len = sizeof(*server_address);  
    
 	    sendto(socket, (const char *)message, strlen(message), MSG_CONFIRM, (const struct sockaddr *) server_address, len);
@@ -164,7 +174,7 @@ int main(int argc, char* argv[])
 	char *IP_TO_BE_CONNECTED = argv[1];
 	int SERVER_PORT, CLIENT_PORT;
 
-	char* message = "senin yengen\n";
+	char message[128]; 
 
 	if (argc != 4)
 	{
@@ -178,13 +188,15 @@ int main(int argc, char* argv[])
 	
 	socketfd = create_socket();
 	
-	process_address(&SERVER_ADDRESS, &CLIENT_ADDRESS, SERVER_PORT);""
+	process_address(&SERVER_ADDRESS, &CLIENT_ADDRESS, SERVER_PORT, CLIENT_PORT);
 
 	establish_connection(socketfd, &CLIENT_ADDRESS);
 
 	recieve_packet(socketfd, &SERVER_ADDRESS, buffer, message);
 
 	close(socketfd);
+
+	return 0;
 
 
 }
