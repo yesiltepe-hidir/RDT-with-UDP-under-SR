@@ -22,7 +22,7 @@
 #include <netinet/in.h>
 
 
-# define MAXLINE 1024 // one line contains at most 256 characters 
+#define MAXLINE 1024 // one line contains at most 256 characters 
 
 
 int create_socket()
@@ -75,14 +75,23 @@ void recieve_packet(int socket, struct sockaddr_in *client_address, char* buffer
 	// In order to send and recieve message in dynamic manner, we take the actual code inside a infinite loop.
 	while (1)
 	{
-		len = sizeof(*client_address);  
-   
-	    n = recvfrom(socket, (char *)buffer, MAXLINE, MSG_WAITALL, ( struct sockaddr *) client_address, &len);
-	    buffer[n] = '\0';
+		
 
-	    printf("Client : %s\n", buffer);
+		len = sizeof(*client_address);  
+   		
+   		printf("Waiting For Client...\n");
+	    n = recvfrom(socket, (char *)buffer, MAXLINE, MSG_WAITALL, ( struct sockaddr *) client_address, &len);
 	    
+	    buffer[n] = '\0';
+	    printf("Client : %s\n", buffer);
+
+
+	    printf("Enter a message:");
+		fgets(message, MAXLINE, stdin);
+	    
+
 	    sendto(socket, (const char *)message, strlen(message), MSG_CONFIRM, (const struct sockaddr *) client_address, len);
+	    
 
 	    printf("Message sent.\n");	
 	}
@@ -159,6 +168,7 @@ void process_address(struct sockaddr_in *server_address, struct sockaddr_in *cli
 	server_address->sin_addr.s_addr = INADDR_ANY;
 	server_address->sin_port = htons(server_port_number);	
 
+
 	return;
 }
 
@@ -179,7 +189,8 @@ int main(int argc, char *argv[])
 	int  socketfd;
 	char buffer[MAXLINE];
 	
-	char *message = "yengen\n";
+	char message[128];
+
 
 	if (argc != 2)
 	{
