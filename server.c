@@ -25,192 +25,223 @@
 #define MAXLINE 1024 // one line contains at most 256 characters 
 
 
+
 int create_socket()
 {
-	int sockfd;
-	/* I will create the socket based on the following configuration:
-	   
-	   1) IP address will be of type IPv4. To do this, we will specify the
-	   first argument as AF_INET.
+	/*
+	Function Description:
+	---------------------
 
-	   2) Application layer packets will be delivered via UDP datagrams. To specify
-	   UDP as an underlying transport layer, we will give the second parameter as 
-	   SOCK_DGRAM.
-
-	   3) Default protocol will be used.
-	*/ 
-
-	// Create the socket file descriptor
-	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	- Creates a UDP socket so that we can communicate with client, recieve datagrams from there and send messages to client.
+	- socket() function is used for socket creation.
 	
-	if (sockfd < 0)
+	Args:
+		(i)   AF_INET: It is used to specify IPv4 addressing.
+		(ii)  SOCK_DGRAM: Specifies that it is a UDP socket.
+		(iii) 0: ....
+	
+
+
+	*/
+	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if(sockfd < 0)
 	{
-		fprintf(stderr, "%s\n", "An error has occured while creating a socket!");
-		exit(1);
+		fprintf(stderr, "%s\n", "Socket couldn't be created!");
+		exit(-1);
 	}
 
 	return sockfd;
 }
 
 
-void recieve_packet(int socket, struct sockaddr_in *client_address, char* buffer, char* message)
+
+int preprocess_address(struct sockaddr_in* server_address, int server_port)
 {	
 
 	/*
-	
-		Definition:
-		- This function is responsible for receiving messages sent by client and sending the message created by server side of the 
-		chat application.
-		
-		Args:
-		- socket: All of the message transmissions between client and server will take place over this socket.
-		- client address: Message will be sent to this IP address.
-		- buffer:  Buffer will contain the message sent by client.
-		- message: The message that will be sent to client by server.
+	Function Description:
+	---------------------
 
+	- It sets the configurations of server address object.
+		(i)   AF_INET: Specifies that server address has IPv4 addressing
+		(ii)  INADDR_ANY: In general, for a server, you typically want to bind to all interfaces - not just "localhost".
+		(iii) Server Port is also given as a sin_port parameter.
 
-	*/
-	int len, n;
-	
-	// In order to send and recieve message in dynamic manner, we take the actual code inside a infinite loop.
-	while (1)
-	{
-		
+	- Also, this function binds the socket to the server address.
 
-		len = sizeof(*client_address);  
-   		
-   		printf("Waiting For Client...\n");
-	    n = recvfrom(socket, (char *)buffer, MAXLINE, MSG_WAITALL, ( struct sockaddr *) client_address, &len);
-	    
-	    buffer[n] = '\0';
-	    printf("Client : %s\n", buffer);
-
-
-	    printf("Enter a message:");
-		fgets(message, MAXLINE, stdin);
-	    
-
-	    sendto(socket, (const char *)message, strlen(message), MSG_CONFIRM, (const struct sockaddr *) client_address, len);
-	    
-
-	    printf("Message sent.\n");	
-	}
-   
-    return;
-}
-
-
-void extract_data()
-{
-
-}
-
-
-void send_packet()
-{
-	
-}
-
-void establish_connection(int socket, struct sockaddr_in *server_address)
-{
-	/*
-		Definition:
-		- This function will bind the server IPv4 address to socket.
-		
-		Args: 
-		- socket: The socket we have already created -> socketfd.
-		- server_address: Pointer to server_address object.
-		
-
-		-> Both server address and client address will be bound to given socket. This means that,
-		The socket will send the packet from server to client (server address takes place here) and
-		receive message from client to server (client address takes place here).
 	
 	*/
 
-	int bind_check = bind(socket, (const struct sockaddr *) server_address, sizeof(*server_address));
+	// -----------------------------Socket Creation--------------------------------------------------------//
+	int sockfd = create_socket();
 
-	// Check whether binding operations occurred with no error
-	if (bind_check < 0)
-	{
-		fprintf(stderr, "%s\n", "Binding Error has occured.");
-		exit(1);
-	}
-
-	printf("Establish Connection: Successful!\n");
-	
-	return;
-
-}
-
-void process_address(struct sockaddr_in *server_address, struct sockaddr_in *client_address, int server_port_number)
-{
-	/*
-
-		Definition:
-
-		- This function will initialize the IPv4 adresses of server and client as 0.
-		- In addition to that, it will fill the information about server side.
-			+ This informations includes:
-			
-			(i)   Family of the Server Adress: Specifying whether it is IPv4 or IPv6. In this implementation I will strictly use IPv4.
-			(ii)  In most of the cases, we want to bind all interfaces but in this assignment we are already given the IP address of the server address.
-			(iii) ...
-
-	*/
-
-	memset(server_address, 0, sizeof(server_address));
-	memset(client_address, 0, sizeof(client_address));
-
-
-	// Fill the informations for server address
 	server_address->sin_family = AF_INET;
 	server_address->sin_addr.s_addr = INADDR_ANY;
-	server_address->sin_port = htons(server_port_number);	
+	server_address->sin_port = htons(server_port);
 
+	
+	// -----------------------------Socket Binding--------------------------------------------------------//
+
+	int socket_bind_check = bind(sockfd, (const struct sockaddr *) server_address, sizeof(*server_address));
+
+	if (socket_bind_check < 0)
+	{
+
+		fprintf(stderr, "%s\n", "Socket couldn't be bound!");
+		exit(-1);
+	}
+
+	return sockfd;
+}
+
+void recieve_packet(int sockfd, char* buff, struct sockaddr_in* client_address, int* len)
+{
+	/*
+	Function Description:
+	---------------------
+	
+	- It receives the packets from client. 
+
+	*/
+
+	int n = 0;
+
+	*len = sizeof(*client_address);
+	n = recvfrom(sockfd, buff, MAXLINE, MSG_WAITALL, (struct sockaddr*) client_address, len);
+	
+	buff[n] = '\0';
+
+	return;
+}
+
+void send_packet(int sockfd, struct sockaddr_in* client_address, char* buff, int* len)
+{
+
+	/*
+	Function Description:
+	---------------------
+
+	-  It sends messages to the client
+
+	*/
+	
+	*len = sizeof(*client_address);
+	sendto(sockfd, (const char*) buff, strlen(buff), MSG_CONFIRM, (const struct sockaddr *) client_address, *len);
+
+	return;
+}
+
+void synchronize_messages(int sockfd, char buff[MAXLINE], struct sockaddr_in* addr, int* len)
+{
+	
+	/*
+
+	Function Description:
+	---------------------
+
+	- This is the mainstream function between server and client. Normally, Client and server can communicate by following
+	an order fashion: Server/Client must wait Client/Server to send a message to them when they want to send new message. 
+
+	- With this function chat application synchronizes the message sending operation by utilizing polling. 
+
+	
+	Approach:
+	---------
+	
+	- Two polls are created:
+		(1) First  one is for, sender-side: socket
+		(2) Second one is for, listener-side: standard input
+	
+	Args to poll():
+
+		(i)   poll_fd: poll array containing 2 polls
+		(ii)  number_of_polls: In this implementation it is 2.
+		(iii) sleep: OS interrupts some process, it is the wait time in microseconds.
+	
+	*/
+
+	int num_events = -1;
+	char temp = '\0';
+	struct pollfd poll_fd[2];
+
+	poll_fd[0].fd = sockfd;
+	poll_fd[0].events = POLLIN;
+
+	poll_fd[1].fd = STDIN_FILENO;
+	poll_fd[1].events = POLLIN;
+
+	while(1)
+	{
+
+		num_events = poll(poll_fd, 2, 2000);
+
+		if(num_events == 0)
+			continue;
+
+
+		int socket_check_point = poll_fd[0].revents & POLLIN;
+		int stdin_check_point = poll_fd[1].revents & POLLIN;
+
+		
+		if(stdin_check_point)
+		{	
+			fgets(buff, MAXLINE, stdin);
+			send_packet(sockfd, buff, addr, len);
+			printf("Client message sent: %s\n", buff);
+			
+			temp = buff[4];
+			buff[4] = '\0';
+			
+			if(!strcmp(buff, "BYE"))
+				break;
+			buff[4] = temp;
+		}
+
+		else if(socket_check_point)
+		{
+			recieve_packet(sockfd, buff, addr, len);
+			printf("Client message received: %s\n", buff);
+			
+			temp = buff[4];
+			buff[4] = '\0';
+			if(!strcmp(buff, "BYE"))
+				break;
+			buff[4] = temp;
+		}
+	}
 
 	return;
 }
 
 int main(int argc, char *argv[])
-{	
-	/* 
-
-	   Take the SERVER PORT number from the command line argument. It is given as 
-	string, so convert it into a integer.
-	
-	*/
-
+{
+	int sockfd, SERVER_PORT;
 	struct sockaddr_in SERVER_ADDRESS, CLIENT_ADDRESS;
-	
 	char *SERVER_PORT_STRING = argv[1];
-	int  SERVER_PORT = atoi(SERVER_PORT_STRING);
+
+	SERVER_PORT = atoi(SERVER_PORT_STRING);
+
+	printf("bind_port: %d\n", SERVER_PORT);
 	
-	int  socketfd;
-	char buffer[MAXLINE];
+	memset(&SERVER_ADDRESS, 0, sizeof(SERVER_ADDRESS));
+    memset(&CLIENT_ADDRESS, 0, sizeof(CLIENT_ADDRESS));
+
+	sockfd = preprocess_address(&SERVER_ADDRESS, SERVER_PORT);
+
+
+	char in_buff[MAXLINE], out_buff[] = "Ben bir cengciyim.";
+	int len = 0;
+
 	
-	char message[128];
+	recieve_packet(sockfd, in_buff, &CLIENT_ADDRESS, &len);
+	printf("Server message received: %s\n", in_buff);
 
+	send_packet(sockfd, out_buff, &CLIENT_ADDRESS, &len);
+	printf("Server message sent: %s\n", out_buff);
+	
+	synchronize_messages(sockfd, &CLIENT_ADDRESS, in_buff, &len);
 
-	if (argc != 2)
-	{
-		fprintf(stderr, "Expected 2 arguments, received [argc] argument(s).");
-		exit(1);
-	}
-
-	// Create the socket
-	socketfd = create_socket();
-
-	process_address(&SERVER_ADDRESS, &CLIENT_ADDRESS, SERVER_PORT);
-
-	establish_connection(socketfd, &SERVER_ADDRESS);
-
-	recieve_packet(socketfd, &CLIENT_ADDRESS, buffer, message);
-
-	close(socketfd);
-
+	close(sockfd);
 	return 0;
-
-
-
 }
