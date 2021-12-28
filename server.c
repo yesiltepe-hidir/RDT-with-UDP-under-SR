@@ -399,6 +399,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 	*/
 
 
+
 	int NUMBER_OF_CHUNKS = 0;
 	char **chunks;
 
@@ -419,13 +420,23 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 	poll_fd[1].events = POLLIN;
 
 	int sent_chunks = 0;
+
+	char **extra_messages = (char **)calloc(20, sizeof(char*));
+    
+    for (int i = 0 ; i < 20; i++)
+        extra_messages[i] = (char*)calloc(9, sizeof(char));
+
+	int num_extra_messages = 0;
+	int process = 0;
+
 	while(1)
 	{
 
 		if (sent_chunks)
 		{
 
-			sent_chunks--;	
+			sent_chunks--;
+
 			// --------------------Create the Packet--------------------------------------------//
 				struct UDP_Datagram *sending_packet;
 				
@@ -453,7 +464,34 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				printf("---------------------------\n");
 		}
 
+		
+		if (sent_chunks == 0 && process <= num_extra_messages)
+		{
+			
+			if (process < num_extra_messages)
+			{
+				message = extra_messages[process++];
 
+				chunks = partition_message(message);
+				
+				// Calculate the total number of chunks
+				NUMBER_OF_CHUNKS = ((strlen(message) - 1) / 8) + ((strlen(message) -1) % 8 != 0);
+				sent_chunks = NUMBER_OF_CHUNKS;
+				
+				printf("Number of chunks: %d\n", NUMBER_OF_CHUNKS);
+				printf("sent_chunks: %d\n", sent_chunks);
+				
+			}
+
+			else if (process == num_extra_messages)
+			{
+				
+				num_extra_messages = 0;
+				process = 0;	
+			}
+
+			
+		}
 
 		num_events = poll(poll_fd, 2, 2000);
 
@@ -481,14 +519,22 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 					// Calculate the total number of chunks
 					NUMBER_OF_CHUNKS = ((strlen(message) - 1) / 8) + ((strlen(message) -1) % 8 != 0);
 					sent_chunks = NUMBER_OF_CHUNKS;
+					initialize_window(&window);
+					current_packet_no = 0;
 					printf("Number of chunks: %d\n", NUMBER_OF_CHUNKS);
 				
 				}
 				
 			}
 
-			// TODO: If buffer is full, wait for ACKs
+			// If buffer is full, put the messages into a buffer
+			else
+			{
 
+				fgets(message, MAXLINE, stdin);
+				extra_messages[num_extra_messages++] = message;
+
+			}
 
 		}
 
