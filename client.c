@@ -10,126 +10,186 @@
 
 #define MAXLINE 1024
 #define WINDOW_SIZE 8
+//--------------------------------Utility functions for sending and receiving messages------------------------------------------ // 
 
 int create_socket()
 {
+	/*
+	Function Description:
+	---------------------
 
+	- Creates a UDP socket so that we can communicate with client, recieve datagrams from there and send messages to client.
+	- socket() function is used for socket creation.
+	
+	Args:
+		(i)   AF_INET: It is used to specify IPv4 addressing.
+		(ii)  SOCK_DGRAM: Specifies that it is a UDP socket.
+		(iii) 0: ....
+	
+
+
+	*/
 	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
 	if(sockfd < 0)
-		printf("A problem occured initializing socket.\n");
+	{
+		fprintf(stderr, "%s\n", "Socket couldn't be created!");
+		exit(-1);
+	}
 
 	return sockfd;
 }
 
 
-void bind_socket(int sockfd, struct sockaddr_in* addr)
-{
-	int flag = bind(sockfd, (const struct sockaddr *) addr, sizeof(*addr));
 
-	if (flag < 0)
-		printf("A problem occured at bind_socket.\n");
+int preprocess_address(struct sockaddr_in* server_address, int server_port)
+{	
 
-	return;
-}
+	/*
+	Function Description:
+	---------------------
 
-int init_comm_socket(int port, struct sockaddr_in* addr)
-{
+	- It sets the configurations of server address object.
+		(i)   AF_INET: Specifies that server address has IPv4 addressing
+		(ii)  INADDR_ANY: In general, for a server, you typically want to bind to all interfaces - not just "localhost".
+		(iii) Server Port is also given as a sin_port parameter.
 
-	if(!addr)
-	{
-		printf("parameter addr is NULL.\n");
-		return -1;
-	}
+	- Also, this function binds the socket to the server address.
 
+	
+	*/
+
+	// -----------------------------Socket Creation--------------------------------------------------------//
 	int sockfd = create_socket();
 
-	addr->sin_family = AF_INET;
-	addr->sin_addr.s_addr = INADDR_ANY;
-	addr->sin_port = htons(port);
+	server_address->sin_family = AF_INET;
+	server_address->sin_addr.s_addr = INADDR_ANY;
+	server_address->sin_port = htons(server_port);
 
-	bind_socket(sockfd, addr);
+	
+	// -----------------------------Socket Binding--------------------------------------------------------//
+
+	int socket_bind_check = bind(sockfd, (const struct sockaddr *) server_address, sizeof(*server_address));
+
+	if (socket_bind_check < 0)
+	{
+
+		fprintf(stderr, "%s\n", "Socket couldn't be bound!");
+		exit(-1);
+	}
 
 	return sockfd;
 }
 
-void recv_packet(int sockfd, char* buff, struct sockaddr_in* addr, int* len)
+void recieve_packet(int sockfd, char* buff, struct sockaddr_in* client_address, int* len)
 {
+	/*
+	Function Description:
+	---------------------
 	
-	if(!addr)
-	{
-		printf("parameter addr is NULL.\n");
-		return;
-	}
+	- It receives the packets from client. 
+
+	*/
 
 	int n = 0;
 
-	*len = sizeof(*addr);
-	n = recvfrom(sockfd, buff, MAXLINE, MSG_WAITALL, (struct sockaddr*) addr, len);
+	*len = sizeof(*client_address);
+	n = recvfrom(sockfd, buff, MAXLINE, MSG_WAITALL, (struct sockaddr*) client_address, len);
 	
 	buff[n] = '\0';
 
 	return;
 }
 
-void send_packet(int sockfd, char* buff, struct sockaddr_in* addr, int* len)
+void send_packet(int sockfd, struct sockaddr_in* client_address, char* buff, int* len)
 {
 
-	if(!addr)
-	{
-		printf("parameter addr is NULL.\n");
-		return;
-	}
+	/*
+	Function Description:
+	---------------------
 
-	*len = sizeof(*addr);
-	sendto(sockfd, (const char*) buff, strlen(buff), MSG_CONFIRM, 
-		   (const struct sockaddr *) addr, *len);
+	-  It sends messages to the client
+
+	*/
+	
+	*len = sizeof(*client_address);
+	sendto(sockfd, (const char*) buff, strlen(buff), MSG_CONFIRM, (const struct sockaddr *) client_address, *len);
 
 	return;
 }
 
-void read_text(int sockfd, char buff[MAXLINE], struct sockaddr_in* addr, int* len)
+void synchronize_messages(int sockfd,  struct sockaddr_in* addr, char buff[MAXLINE], int* len)
 {
+	
+	/*
+
+	Function Description:
+	---------------------
+
+	- This is the mainstream function between server and client. Normally, Client and server can communicate by following
+	an order fashion: Server/Client must wait Client/Server to send a message to them when they want to send new message. 
+
+	- With this function chat application synchronizes the message sending operation by utilizing polling. 
+
+	
+	Approach:
+	---------
+	
+	- Two polls are created:
+		(1) First  one is for, sender-side: socket
+		(2) Second one is for, listener-side: standard input
+	
+	Args to poll():
+
+		(i)   poll_fd: poll array containing 2 polls
+		(ii)  number_of_polls: In this implementation it is 2.
+		(iii) sleep: OS interrupts some process, it is the wait time in microseconds.
+	
+	*/
+
 	int num_events = -1;
 	char temp = '\0';
-	struct pollfd pfds[2];
+	struct pollfd poll_fd[2];
 
-	pfds[0].fd = sockfd;
-	pfds[0].events = POLLIN;
+	poll_fd[0].fd = sockfd;
+	poll_fd[0].events = POLLIN;
 
-	pfds[1].fd = STDIN_FILENO;
-	pfds[1].events = POLLIN;
+	poll_fd[1].fd = STDIN_FILENO;
+	poll_fd[1].events = POLLIN;
 
 	while(1)
 	{
 
-		num_events = poll(pfds, 2, 2000);
+		num_events = poll(poll_fd, 2, 2000);
 
 		if(num_events == 0)
+		{
+			printf("Poll timed out\n");
 			continue;
+		}
 
 
-		int sock_flag = pfds[0].revents & POLLIN;
-		int stdio_flag = pfds[1].revents & POLLIN;
+		int socket_check_point = poll_fd[0].revents & POLLIN;
+		int stdin_check_point = poll_fd[1].revents & POLLIN;
 
 		
-		if(stdio_flag)
+		if(stdin_check_point)
 		{	
 			fgets(buff, MAXLINE, stdin);
-			send_packet(sockfd, buff, addr, len);
+			send_packet(sockfd, addr, buff, len);
 			printf("Client message sent: %s\n", buff);
 			
-
 			temp = buff[4];
 			buff[4] = '\0';
+			
 			if(!strcmp(buff, "BYE"))
 				break;
 			buff[4] = temp;
 		}
 
-		else if(sock_flag)
+		else if(socket_check_point)
 		{
-			recv_packet(sockfd, buff, addr, len);
+			recieve_packet(sockfd, buff, addr, len);
 			printf("Client message received: %s\n", buff);
 			
 			temp = buff[4];
@@ -142,6 +202,7 @@ void read_text(int sockfd, char buff[MAXLINE], struct sockaddr_in* addr, int* le
 
 	return;
 }
+
 
 
 // -------------------------------------------------Reliable Data Transfer--------------------------------------------------------//
@@ -261,7 +322,6 @@ int calculate_checksum(struct UDP_Datagram *packet)
 }
 
 
-
 struct UDP_Datagram* create_packet(char *partitioned_message, int sqNo)
 {
 	
@@ -319,6 +379,7 @@ char **partition_message(char* message)
 }
 
 
+
 void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char* message, int* len)
 {
 
@@ -336,6 +397,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 
 	*/
+
 
 
 	int NUMBER_OF_CHUNKS = 0;
@@ -358,13 +420,23 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 	poll_fd[1].events = POLLIN;
 
 	int sent_chunks = 0;
+
+	char **extra_messages = (char **)calloc(20, sizeof(char*));
+    
+    for (int i = 0 ; i < 20; i++)
+        extra_messages[i] = (char*)calloc(9, sizeof(char));
+
+	int num_extra_messages = 0;
+	int process = 0;
+
 	while(1)
 	{
 
 		if (sent_chunks)
 		{
 
-			sent_chunks--;	
+			sent_chunks--;
+
 			// --------------------Create the Packet--------------------------------------------//
 				struct UDP_Datagram *sending_packet;
 				
@@ -392,7 +464,34 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				printf("---------------------------\n");
 		}
 
+		
+		if (sent_chunks == 0 && process <= num_extra_messages)
+		{
+			
+			if (process < num_extra_messages)
+			{
+				message = extra_messages[process++];
 
+				chunks = partition_message(message);
+				
+				// Calculate the total number of chunks
+				NUMBER_OF_CHUNKS = ((strlen(message) - 1) / 8) + ((strlen(message) -1) % 8 != 0);
+				sent_chunks = NUMBER_OF_CHUNKS;
+				
+				printf("Number of chunks: %d\n", NUMBER_OF_CHUNKS);
+				printf("sent_chunks: %d\n", sent_chunks);
+				
+			}
+
+			else if (process == num_extra_messages)
+			{
+				
+				num_extra_messages = 0;
+				process = 0;	
+			}
+
+			
+		}
 
 		num_events = poll(poll_fd, 2, 2000);
 
@@ -420,14 +519,22 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 					// Calculate the total number of chunks
 					NUMBER_OF_CHUNKS = ((strlen(message) - 1) / 8) + ((strlen(message) -1) % 8 != 0);
 					sent_chunks = NUMBER_OF_CHUNKS;
+					initialize_window(&window);
+					current_packet_no = 0;
 					printf("Number of chunks: %d\n", NUMBER_OF_CHUNKS);
 				
 				}
 				
 			}
 
-			// TODO: If buffer is full, wait for ACKs
+			// If buffer is full, put the messages into a buffer
+			else
+			{
 
+				fgets(message, MAXLINE, stdin);
+				extra_messages[num_extra_messages++] = message;
+
+			}
 
 		}
 
@@ -438,9 +545,8 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 		{
 			int n, len;
 			struct UDP_Datagram *receiving_packet;
+
 			receiving_packet = (struct UDP_Datagram*) malloc(sizeof(struct UDP_Datagram));
-
-
 
 			printf("-RECIEVE-\n");
 
@@ -451,13 +557,14 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 			
 			printf("Packet has been recieved!\n");
 
+
 			printf("payload: %s\n", receiving_packet->payload);
 
 			// Check if data is garbled
 			int received_sqNo, recieved_checksum, packet_checksum;
 
 			received_sqNo = receiving_packet->sqNo;
-			
+
 			printf("received_sqNo: %d\n", received_sqNo);
 
 			recieved_checksum = receiving_packet->checksum;
@@ -481,10 +588,10 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 					
 			}
 
+			
 			// -----------------------------------Send ACK--------------------------------------//
 			if (recieved_checksum == packet_checksum && receiving_packet->is_ACKed == 0)
 			{
-
 				printf("ACK has been sent\n");
 
 				receiving_packet->is_ACKed = 1;
@@ -493,7 +600,6 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 							   (const struct sockaddr *)client_address, 
 							   sizeof(*client_address));
 			}
-
 
 
 			else if (receiving_packet->is_ACKed)
@@ -505,14 +611,13 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				window.buffer_available++;
 				NUMBER_OF_CHUNKS--;
 
-				printf("window sequence number before: %d\n", window.sequence_number);
+				printf("Buffer Available: %d\n", window.buffer_available);
+
 				// ------------------Sliding Window Operation ------------------------------------------//
 				
 				while (window.packets[window.pass * window.window_size + window.sequence_number].is_ACKed)
 				{	
 					
-					printf("string: %s\n", window.packets[window.pass * window.window_size + window.sequence_number].payload);
-
 					window.sequence_number++;
 					
 					if (window.sequence_number == window.window_size)
@@ -524,7 +629,6 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				}
 
 				printf("Sliding Window sequence_number: %d\n", window.sequence_number);
-
 			}
 
 			printf("---------------------------\n");
@@ -541,48 +645,38 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
-	int sockfd, port;
-	struct sockaddr_in servaddr, cliaddr;
-	char *ip_str = argv[1];
-	int send_port = atoi(argv[2]), bind_port = atoi(argv[3]);
+	int sockfd, SERVER_PORT;
+	struct sockaddr_in SERVER_ADDRESS, CLIENT_ADDRESS;
+	char *SERVER_PORT_STRING = argv[1];
 
-	printf("send_port: %d, bind_port: %d, ip_str: %s\n", send_port, bind_port, ip_str);
+	SERVER_PORT = atoi(SERVER_PORT_STRING);
 
-	memset(&servaddr, 0, sizeof(servaddr));
-    memset(&cliaddr, 0, sizeof(cliaddr));
+	printf("bind_port: %d\n", SERVER_PORT);
+	
+	memset(&SERVER_ADDRESS, 0, sizeof(SERVER_ADDRESS));
+    memset(&CLIENT_ADDRESS, 0, sizeof(CLIENT_ADDRESS));
 
-    sockfd = init_comm_socket(bind_port, &cliaddr);
+	sockfd = preprocess_address(&SERVER_ADDRESS, SERVER_PORT);
 
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = INADDR_ANY;
-    servaddr.sin_port = htons(send_port);
 
-    char in_buff[MAXLINE], out_buff[MAXLINE] = "Ben bir eşşeğim.";
+	char in_buff[MAXLINE], out_buff[] = "Ben bir cengciyim.";
 	int len = 0;
 
 	
-	send_packet(sockfd, out_buff, &servaddr, &len);
-	printf("Client message sent: %s\n", out_buff);
+	recieve_packet(sockfd, in_buff, &CLIENT_ADDRESS, &len);
+	printf("Server message received: %s\n", in_buff);
 
-	recv_packet(sockfd, in_buff, &servaddr, &len);
-	printf("Client message received: %s\n", in_buff);
+	send_packet(sockfd, &CLIENT_ADDRESS, out_buff, &len);
+	printf("Server message sent: %s\n", out_buff);
 	
-	reliable_data_transfer(sockfd, &servaddr ,in_buff, &len);
+	reliable_data_transfer(sockfd, &CLIENT_ADDRESS, in_buff, &len);
 
 	close(sockfd);
 	return 0;
 }
+
+
+
+// aaaaaaaabbbbbbbbaaaaaaaabbbbbbbbaaaaaaaabbbbbbbbaaaaaaaabbbbbbbbaaaaaaaabbbbbbbb
