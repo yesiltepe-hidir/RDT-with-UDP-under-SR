@@ -7,9 +7,12 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/time.h>
 
 #define MAXLINE 1024
 #define WINDOW_SIZE 8
+#define TIME_OUT 1000
+
 //--------------------------------Utility functions for sending and receiving messages------------------------------------------ // 
 
 int create_socket()
@@ -235,7 +238,7 @@ struct UDP_Datagram
 	int checksum;
 	int sqNo;
 	int is_ACKed;
-
+	struct timeval timeout_time;
 
 };
 
@@ -264,26 +267,26 @@ struct Window
 			# Then it will create a UPD_Datagram array of size 256 / 8 = 32. BUT this is not buffer size. This is just for physical design of 
 		buffer. Instead of using a queue structure, I merged all of them. See below for visual explanation:
 
-				_________________________Window Size________________________
+										________________Window Size_____________
 
-				0               1               2           3              7        0        1            2
-				-------------------------------------------------------------------------------------------	
-				| 		|		| 	    |     .....    |        |        |            |   -> Total 32 byte										  
-				-------------------------------------------------------------------------------------------	
-				^                                                          ^
-		   sequence_start	                                              sequence_end    
+										0       1       2       3              7        0        1            2
+										-----------------------------------------------------------------------	
+										| 		|		| 	    |     .....    |        |        |            |		-> Total 32 byte										  
+										-----------------------------------------------------------------------	
+										^                                      ^
+								   sequence_start	                      sequence_end    
 
 			# Assume that, for the first packet 0, ACK is recieved. Then, window will be slided and will have the form:
 
-						___________________Window Size_______________________
+												________________Window Size_____________
 
-				0               1               2           3              7        0        1            2
-				-------------------------------------------------------------------------------------------	
-				| 	+	|		| 	    |     .....    |        |        |            |    -> Total 32 byte										  
-				-------------------------------------------------------------------------------------------
-						^                                                   ^
-					sequence_start	                                       sequence_end  
-
+										0       1       2       3              7        0        1            2
+										-----------------------------------------------------------------------	
+										| 	+	|		| 	    |     .....    |        |        |            |		-> Total 32 byte										  
+										-----------------------------------------------------------------------	
+												^                                       ^
+								   			sequence_start	                        sequence_end  
+							
 	*/				
 	
 	struct UDP_Datagram packets[256 / WINDOW_SIZE];
@@ -335,10 +338,12 @@ struct UDP_Datagram* create_packet(char *partitioned_message, int sqNo)
 
 	packet->sqNo = sqNo;
 	packet->is_ACKed = 0;
-
+	
 	strcpy(packet->payload, partitioned_message);
 	packet->payload[8] = '\0';
 	packet->checksum = calculate_checksum(packet);
+
+	gettimeofday(&(packet->timeout_time), NULL);
 
 	return packet;
 }
@@ -410,6 +415,8 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 	struct Window window;
 	initialize_window(&window);
 
+	window.sequence_number = -1;
+
 	int current_packet_no = 0;
 
 	// Polling Declarations
@@ -427,20 +434,18 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 	char **extra_messages = (char **)calloc(20, sizeof(char*));
     
     for (int i = 0 ; i < 20; i++)
-        extra_messages[i] = (char*)calloc(9, sizeof(char));
+        extra_messages[i] = (char*)calloc(256, sizeof(char));
 
 	int num_extra_messages = 0;
 	int process = 0;
 
 
-
-
-	int test_case = -2;
-
-
+	int start, end;
 
 	while(1)
 	{
+
+
 		/*
 			
 			# Definition of `if (sent_chunks)` block:
@@ -481,14 +486,14 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 			(+) denotes that ACK has    been recieved.
 
 
-			6        7            0             1           2             3            4          5          6            7           0
-			-----------------------------------------------------------------------------------------------------------------------------------
-			|   +    |      +     |      +      |      -     |     -      |      -     |     -    |    -     |      -     |    -      |   ....
-			------------------------------------------------------------------------------------------------------------------------------------
-							    ^							                                  ^													      ^
-						      window sequence                                                                      current packet
-							  number                                                                               number
-
+				6        7            0             1           2             3            4          5          6            7           0
+				-----------------------------------------------------------------------------------------------------------------------------------
+				|   +    |      +     |      +      |      -     |     -      |      -     |     -    |    -     |      -     |    -      |   ....
+				------------------------------------------------------------------------------------------------------------------------------------
+											        ^																				      ^
+										      window sequence                                                                        current packet
+											     number                                                                                 number
+				
 				# If we didn't apply the circular indexing, we would have window sequence number 9. But now it is 1 and we need to send
 			the 17th chunk (since indexes are 0 based it is index 16). Let's look at the formula again to see it gives the correct answer:
 							
@@ -522,7 +527,6 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				
 				printf("Packet has been send successfuly!\n");
 				
-
 				window.packets[(window.pass + (window.sequence_number > current_packet_no)) * window.window_size + current_packet_no] = *sending_packet;
 				window.buffer_available--;
 				current_packet_no = (current_packet_no + 1) % window.window_size;
@@ -555,15 +559,14 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				num_extra_messages = 0;
 				process = 0;	
 				NUMBER_OF_CHUNKS = 0;
+				window.sequence_number = -1;
 			}
 
 			
 		}
+		
 
 		num_events = poll(poll_fd, 2, 2000);
-
-		if (num_events == 0)
-			continue;
 
 		int socket_check_point = poll_fd[0].revents & POLLIN;
 		int stdin_check_point =  poll_fd[1].revents & POLLIN;
@@ -593,8 +596,8 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 		{	
 			// If buffer is not full, then create a packet and send it.
 			if (window.buffer_available)
-			{	
-
+			{
+	
 				printf("-SEND-\n");
 				if (NUMBER_OF_CHUNKS == 0)
 				{
@@ -608,6 +611,11 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 					initialize_window(&window);
 					current_packet_no = 0;
 					printf("Number of chunks: %d\n", NUMBER_OF_CHUNKS);
+					
+					struct UDP_Datagram *sending_packet;
+					sending_packet = create_packet(chunks[(window.pass + (window.sequence_number > current_packet_no)) * window.window_size + current_packet_no], current_packet_no);
+					window.packets[(window.pass + (window.sequence_number > current_packet_no)) * window.window_size + current_packet_no] = *sending_packet;
+				
 				
 				}
 				
@@ -625,8 +633,16 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 		}
 
 
-
 		// --------------------------------Recieve Operations----------------------------------------//
+
+		/*
+
+			Description of `Receive Operations` block:
+			------------------------------------------
+
+			- 
+
+		*/
 		else if(socket_check_point)
 		{
 			int n, len;
@@ -652,48 +668,12 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 			received_sqNo = receiving_packet->sqNo;
 
-			/* 
-			if (test_case > -1)
-			{
-				printf("TEST CASE\n");
-
-				receiving_packet->sqNo = test_case;
-				received_sqNo = receiving_packet->sqNo;
-				
-				if (test_case == 3)
-				{
-					strcpy(receiving_packet->payload, "dddddddd");
-				}
-
-				if (test_case == 2)
-				{
-					strcpy(receiving_packet->payload, "cccccccc");
-
-				}
-
-				if (test_case == 1)
-				{
-					strcpy(receiving_packet->payload, "bbbbbbbb");
-
-				}
-
-				if (test_case == 0)
-				{
-					strcpy(receiving_packet->payload, "aaaaaaaa");
-
-				}
-				test_case--;
-
-			}
-			*/
 
 			printf("received_sqNo: %d\n", received_sqNo);
 
 			recieved_checksum = receiving_packet->checksum;
 			packet_checksum = calculate_checksum(receiving_packet);
 			
-			//packet_checksum = recieved_checksum;
-
 
 			printf("recieved_checksum: %d packet_checksum: %d\n", recieved_checksum, packet_checksum);
 			
@@ -701,17 +681,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 			if (recieved_checksum != packet_checksum)
 			{
 				fprintf(stderr, "%s\n", "Checksum Error: Packet hasn't been delivered correctly!\n");
-
-				// --------------------Create the Packet--------------------------------------------//
-				struct UDP_Datagram *resending_packet;
-				resending_packet = &(window.packets[(window.pass + (window.sequence_number > received_sqNo)) * window.window_size + received_sqNo]);				
-
-				//----------------------Send the Packet--------------------------------------------//
-				sendto(sockfd, (const struct UDP_Datagram*)resending_packet, sizeof(*resending_packet), MSG_CONFIRM, 
-							   (const struct sockaddr *)client_address, 
-							   sizeof(*client_address));
-				
-				printf("Packet has been resended\n");
+				printf("Waiting for Time out...\n");
 			}
 
 			
@@ -719,8 +689,8 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 			else if (recieved_checksum == packet_checksum && receiving_packet->is_ACKed == 0)
 			{
 				
+				receiving_packet->is_ACKed = 1;
 				window.ack_cache[(window.pass + (window.sequence_number > received_sqNo)) * window.window_size + received_sqNo] = *receiving_packet;
-				window.ack_cache[(window.pass + (window.sequence_number > received_sqNo)) * window.window_size + received_sqNo].is_ACKed = 1;
 
 
 				while (window.ack_cache[window.cache_index].is_ACKed)
@@ -730,7 +700,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 				}
 
-				receiving_packet->is_ACKed = 1;
+				
 
 				sendto(sockfd, (const struct UDP_Datagram*)receiving_packet, sizeof(*receiving_packet), MSG_CONFIRM, 
 							   (const struct sockaddr *)client_address, 
@@ -744,35 +714,101 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 			{
 				
 				printf("Packet Delivered Correctly!\n");
+				printf("ACK: %d\n", receiving_packet->sqNo);
 
 				window.packets[(window.pass + (window.sequence_number > received_sqNo)) * window.window_size + received_sqNo] = *receiving_packet;
 				window.buffer_available++;
 				NUMBER_OF_CHUNKS--;
 
-				// printf("Buffer Available: %d\n", window.buffer_available);
 
 				// ------------------Sliding Window Operation ------------------------------------------//
 				
 				while (window.packets[window.pass * window.window_size + window.sequence_number].is_ACKed)
 				{	
-					// printf("Client: %s\n", window.packets[window.pass * window.window_size + window.sequence_number].payload);
-
 					window.sequence_number++;
 					
 					if (window.sequence_number == window.window_size)
 					{
 						window.pass++;
 						window.sequence_number = 0;
-						break;
 					} 
 				}
 
-				// printf("Sliding Window sequence_number: %d\n", window.sequence_number);
 			}
 
 			printf("---------------------------\n");
 		
 		}
+
+
+
+		// -----------------------------------------------------Timeout-------------------------------------------------------//
+
+	/*
+		# Definition of `Timeout` block:
+		--------------------------------	
+	
+	*/	
+		struct timeval current_time;
+
+		gettimeofday(&current_time, NULL);
+
+		long current_time_microsecond = current_time.tv_sec * 1000000 + current_time.tv_usec;
+		long time_passed = current_time_microsecond - (window.packets[0].timeout_time.tv_sec * 1000000 + window.packets[0].timeout_time.tv_usec); 
+
+		
+		int temp_sent_chunks = sent_chunks;
+		
+		if (temp_sent_chunks && window.ack_cache[window.cache_index].is_ACKed == 0)
+		{
+			
+			
+			printf("temp_sent_chunks: %d\n", temp_sent_chunks);
+			start = window.window_size * window.pass + window.sequence_number;
+			end = start + temp_sent_chunks;
+			
+			while (start < end)
+			{	
+				
+				struct timeval current_time;
+
+				gettimeofday(&current_time, NULL);
+
+				long current_time_microsecond = current_time.tv_sec * 1000000 + current_time.tv_usec;
+				long time_passed = current_time_microsecond - (window.packets[start].timeout_time.tv_sec * 1000000 + window.packets[start].timeout_time.tv_usec); 
+
+				printf("TIME PASSED: %ld\n", time_passed);
+
+				if (time_passed > TIME_OUT)
+				{
+					printf("Timeout!.. Resending the packet no: %d\n", start - window.window_size * window.pass);
+					struct UDP_Datagram *sending_packet;
+					
+					sending_packet = create_packet(window.packets[start].payload, window.packets[start].sqNo);
+					printf("start %d\n", start);
+					printf("payload: %s\n", window.packets[start].payload);
+					*sending_packet = window.packets[start];  
+
+					sendto(sockfd, (const struct UDP_Datagram*)sending_packet, sizeof(*sending_packet), MSG_CONFIRM, 
+									   (const struct sockaddr *)client_address, 
+									   sizeof(*client_address));
+					start++;
+				}
+
+				else
+					break;
+
+
+			}
+
+
+		}
+			
+
+		
+		
+
+		
 
 	}
 
@@ -802,8 +838,7 @@ int main(int argc, char *argv[])
 
 	char in_buff[MAXLINE], out_buff[] = "Ben bir cengciyim.";
 	int len = 0;
-
-	
+		
 	recieve_packet(sockfd, in_buff, &CLIENT_ADDRESS, &len);
 	printf("Server message received: %s\n", in_buff);
 
