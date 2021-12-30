@@ -464,7 +464,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 		 is calling `create_packet` utility function and passing its return packet as `sending_packet`.
 
 		 	- current_packet_no: It is a circular sequence number for packets that has been created. 
-		 		-> In this implementation, window size is 8. Then, packet numbers follow 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, ... ordering.
+		 		-> In this implementation, window size is 8. Then, packet numbers follow 0, 1, 2, 3, 4, 5, 6, 7, ..., 14, 15, 0, 1, 2 ... ordering.
 			
 			- num_extra_messages = It is the count that shows how many messages has been recieved while delivering the current packet.
 				-> For example, Suppose we deliver the packages for message "I'm sleeping 4 hours for previous 3 days JUST BECAUSE OF NETWORK HOMEWORK!"
@@ -480,14 +480,14 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 		as the following formula:
 
 							current packet payload = chunks[current payload index] where
-							current payload index = [window.pass + (window.sequence_number > current_packet_no)] * window.window_size + current_packet_no
+							current payload index = [window.pass * 2 * window.window_size + current_packet_no]
 
 			Suppose that packets have been sent and we have following configuration:
 			(-) denotes that ACK hasn't been recieved at the moment we took below snapshot.
 			(+) denotes that ACK has    been recieved.
 
 
-				6        7            0             1           2             3            4          5          6            7           0
+				14       15           0             1           2             3            4          5          6            7           8
 				-----------------------------------------------------------------------------------------------------------------------------------
 				|   +    |      +     |      +      |      -     |     -      |      -     |     -    |    -     |      -     |    -      |   ....
 				------------------------------------------------------------------------------------------------------------------------------------
@@ -495,11 +495,11 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 										      window sequence                                                                        current packet
 											     number                                                                                 number
 				
-				# If we didn't apply the circular indexing, we would have window sequence number 9. But now it is 1 and we need to send
-			the 17th chunk (since indexes are 0 based it is index 16). Let's look at the formula again to see it gives the correct answer:
+				# If we didn't apply the circular indexing, we would have window sequence number 17. But now it is 8 and we need to send
+			the 24th chunk. Let's look at the formula again to see it gives the correct answer:
 							
-							window pass = 1 since window slided only 1 pass of the length 8.
-							current payload index = ([1 + (1 > 0)] x 8 + 0) = 16 (Correct) 
+							window pass = 1 since window slided only 1 pass of the length 16 (2 * window size).
+							current payload index = (1 * 2 * 8 + 8 = 24 (Correct) 
 
 		*/
 			if (sent_chunks == 0 && process <= num_extra_messages)
@@ -544,8 +544,11 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				
 				sending_packet = create_packet(chunks[window.pass * 2 * window.window_size + current_packet_no], current_packet_no);
 				sending_packet->remained = sent_chunks;
+				if (strcmp(sending_packet->payload, "BYE\n") == 0)
+				{
+						break;
+				}
 				
-				//printf("Packet no: %d\n", current_packet_no);
 
 
 				//----------------------Send the Packet--------------------------------------------//
@@ -614,6 +617,8 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 					
 					struct UDP_Datagram *sending_packet;
 					sending_packet = create_packet(chunks[window.pass * 2 * window.window_size + current_packet_no], current_packet_no);
+
+
 					sending_packet->remained = sent_chunks - 1;
 					window.packets[window.pass * 2 * window.window_size + current_packet_no] = *sending_packet;
 				
@@ -641,7 +646,9 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 			Description of `Receive Operations` block:
 			------------------------------------------
 
-			- 
+			- This part of the code corresponds to all of the recieving operations of the chat application.
+			- There are some control points, Let me describe them:
+				(i) First
 
 		*/
 		else if(socket_check_point)
@@ -651,6 +658,10 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 			receiving_packet = (struct UDP_Datagram*) malloc(sizeof(struct UDP_Datagram));
 
+			if (strcmp(receiving_packet->payload, "BYE\n") == 0)
+			{
+				break;
+			}
 			//printf("-RECIEVE-\n");
 
 			len = sizeof(*client_address);
@@ -835,12 +846,8 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 			}
 
-			//printf("------------------------------\n");
-
-
 		}
 			
-
 	}
 
 	return;
@@ -865,16 +872,16 @@ int main(int argc, char *argv[])
 
 	sockfd = preprocess_address(&SERVER_ADDRESS, SERVER_PORT);
 
-
-	char in_buff[MAXLINE], out_buff[] = "Ben bir cengciyim.";
+	
+	char in_buff[2 *MAXLINE], out_buff[] = "Ben bir cengciyim.";
 	int len = 0;
-		
+/*
 	recieve_packet(sockfd, in_buff, &CLIENT_ADDRESS, &len);
 	printf("Server message received: %s\n", in_buff);
 
 	send_packet(sockfd, &CLIENT_ADDRESS, out_buff, &len);
 	printf("Server message sent: %s\n", out_buff);
-	
+*/	
 	reliable_data_transfer(sockfd, &CLIENT_ADDRESS, in_buff, &len);
 
 	close(sockfd);
