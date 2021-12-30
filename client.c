@@ -485,6 +485,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				
 				sending_packet = create_packet(chunks[window.pass * 2 * window.window_size + current_packet_no], current_packet_no);
 				sending_packet->remained = sent_chunks;
+
 				
 
 
@@ -493,6 +494,12 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				sendto(sockfd, (const struct UDP_Datagram*)sending_packet, sizeof(*sending_packet), MSG_CONFIRM, 
 							   (const struct sockaddr *)client_address, 
 							   sizeof(*client_address));
+				
+				if (strcmp(sending_packet->payload, "BYE") == 0)
+				{		
+
+						break;
+				}
 
 				total_send_packets++;
 				
@@ -599,6 +606,10 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 								 (struct sockaddr *)client_address, &len);
 			
 
+			if (strcmp(receiving_packet->payload, "BYE\n") == 0)
+			{
+				break;
+			}
 			// Check if data is garbled
 			int received_sqNo, recieved_checksum, packet_checksum;
 
@@ -810,16 +821,16 @@ int main(int argc, char* argv[])
     servaddr.sin_addr.s_addr = INADDR_ANY;
     servaddr.sin_port = htons(send_port);
 
-    char in_buff[MAXLINE], out_buff[MAXLINE] = "Ben bir eşşeğim.";
+    char in_buff[2 * MAXLINE], out_buff[MAXLINE] = "Ben bir eşşeğim.";
 	int len = 0;
 
-	
+	/*
 	send_packet(sockfd, out_buff, &servaddr, &len);
 	printf("Client message sent: %s\n", out_buff);
 
 	recv_packet(sockfd, in_buff, &servaddr, &len);
 	printf("Client message received: %s\n", in_buff);
-	
+	*/
 	reliable_data_transfer(sockfd, &servaddr ,in_buff, &len);
 
 	close(sockfd);
