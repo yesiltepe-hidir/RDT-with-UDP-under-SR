@@ -11,10 +11,10 @@
 
 #define MAXLINE 1024
 #define WINDOW_SIZE 8
-#define TIME_OUT 1000
+#define TIME_OUT 100000
 
 int c = 2;
-
+// -----------------------------------------------------------------RDT 2.0 Utilities --------------------------------------------//
 int create_socket()
 {
 
@@ -37,7 +37,7 @@ void bind_socket(int sockfd, struct sockaddr_in* addr)
 	return;
 }
 
-int init_comm_socket(int port, struct sockaddr_in* addr)
+int start_process(int port, struct sockaddr_in* addr)
 {
 
 	if(!addr)
@@ -151,8 +151,6 @@ void read_text(int sockfd, char buff[MAXLINE], struct sockaddr_in* addr, int* le
 // -------------------------------------------------Reliable Data Transfer--------------------------------------------------------//
 
 
-
-
 struct UDP_Datagram	
 {
 	/*
@@ -168,10 +166,11 @@ struct UDP_Datagram
 	--------
 	
 	- payload:  8 byte message.
-	- checksum:	
- 	- sqNo:		Every UDP packet will have a sequence number. Sequence numbers follow a circular manner and 0 based: 0, 1, ..., WINDOW_SIZE-1, 0, 1, ...
+	- checksum:	Checksum value
+ 	- sqNo:		Every UDP packet will have a sequence number. Sequence numbers follow a circular manner and 0 based: 0, 1, ..., 2 * WINDOW_SIZE-1, 0, ...
 	- is_ACKed: Specifying that whether this packet is ACKed by the reciever.
- 	
+ 	- timeout_time: Every UDP packet has its own sending time. This will be used for detecting whether there exists any timeout for given UDP packet.
+ 	- remained: It is used for detecting if message end has been recieved.
 	*/
 
 	char payload[9]; // 8 byte message + '\0'
@@ -180,7 +179,6 @@ struct UDP_Datagram
 	int is_ACKed;
 	struct timeval timeout_time;
 	int remained;
-
 
 };
 
@@ -332,20 +330,7 @@ char **partition_message(char* message)
 void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char* message, int* len)
 {
 
-	/*
-	
-	Function Definition:
-	--------------------
 
-	- This function implements the reliable data transfer protocol using UDP Datagrams and Selective Repeat Protocol.
-	- ....
-	- .... 
-
-	Steps:
-		1) Given a message, read it in chunks, make these chunks a packet.
-
-
-	*/
 	struct UDP_Datagram ack_cache[256 / WINDOW_SIZE]; 
 	int cache_index = 0;
 	memset(ack_cache, 0, sizeof(ack_cache));
@@ -495,7 +480,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 							   (const struct sockaddr *)client_address, 
 							   sizeof(*client_address));
 				
-				if (strcmp(sending_packet->payload, "BYE") == 0)
+				if (strcmp(sending_packet->payload, "BYE\n") == 0)
 				{		
 
 						break;
@@ -581,14 +566,47 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 		}
 
 
-		// --------------------------------Recieve Operations----------------------------------------//
+		// ------------------------------------------Recieve Operations-----------------------------------------------------------//
 
 		/*
 
 			Description of `Receive Operations` block:
 			------------------------------------------
 
-			- 
+			- This part of the code corresponds to all of the recieving operations of the chat application.
+			- There are some control points, Let me describe them:
+				(i)   First, checksun is controlled, if there is any corruption in the recieved data, message is asked to be resended.
+				
+				(ii)  Secondly, if message is recieved correctly then server send a ACK message to client.
+
+				(iii) Furthermore, if the recieved UDP packet has ACK 1 in its is_ACKed field then Window sliding operation takes place.
+
+			
+			Side Notes:
+			-----------
+			- How window is slided? Let's take a look at it more closely. Suppose at the snapshot we have following configuration:
+
+					13      14        15        0       1           2           3           4           5              6 
+			--------------------------------------------------------------------------------------------------------------------
+				+	|	+	|	 +    |   	+	|	+	|	  -		|	 +		|	 +		|	  -		|		-	   |
+			--------------------------------------------------------------------------------------------------------------------
+														^
+												 window sequence
+			     									 number		
+		
+			# When an ACK: 1 has been recieved, since window sequence number is pointing to point 1, it will slide whenever it encounters with
+		a packet with has no ACK or recieved packets are finished, it stops sliding. After ACK 1 is recieved and sliding the window, 
+		the configuration will be like:
+
+					13      14        15        0       1           2           3           4           5              6 
+			--------------------------------------------------------------------------------------------------------------------
+				+	|	+	|	 +    |   	+	|	+	|	  +		|	 +		|	 +		|	  -		|		-	   |
+			--------------------------------------------------------------------------------------------------------------------
+																							^
+												 									  window sequence
+			     									 									  number		
+		
+
 
 		*/
 		else if(socket_check_point)
@@ -722,7 +740,6 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 			}
 
 			
-			//printf("---------------------------\n");
 		}
 
 
@@ -730,7 +747,18 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 	/*
 		# Definition of `Timeout` block:
-		--------------------------------	
+		--------------------------------
+		- A UDP datagram has timeout_time field.
+		
+		-> UDP DATAGRAM  <-  
+		___________________
+		|		           | 
+		|------------------|     # If a sent packet hasn't been ACKed yet, `timeout_time` value is used to detect this. If this is the case,
+		|	timeout_time   |  send the packet again.
+		|------------------|	 # ACK may be recieved after we resend the packet, in this case take the ACK, if window sequence is 
+		|				   |  pointing to this place, slide the window. When same ACK came twice, do anything.
+		|__________________|
+		
 	
 	*/	
 		struct timeval current_time;
@@ -785,8 +813,6 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 			}
 
-			//printf("------------------------------\n");
-
 
 		}
 			
@@ -798,9 +824,6 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 }
 
 
-// aaaaaaaabbbbbbbbccccccccddddddddaaaaaaaabbbbbbbbccccccccddddddddaaaaaaaabbbbbbbbccccccccddddddddaaaaaaaabbbbbbbbccccccccddddddddaaaaaaaabbbbbbbbccccccccddddddddaaaaaaaabbbbbbbbccccccccddddddddaaaaaaaabbbbbbbbccccccccddddddddaaaaaaaabbbbbbbbccccccccdddddddd
-
-
 
 
 int main(int argc, char* argv[])
@@ -810,12 +833,12 @@ int main(int argc, char* argv[])
 	char *ip_str = argv[1];
 	int send_port = atoi(argv[2]), bind_port = atoi(argv[3]);
 
-	printf("send_port: %d, bind_port: %d, ip_str: %s\n", send_port, bind_port, ip_str);
+	printf("SEND: %d, BIND: %d, ip_str: %s\n", send_port, bind_port, ip_str);
 
 	memset(&servaddr, 0, sizeof(servaddr));
     memset(&cliaddr, 0, sizeof(cliaddr));
 
-    sockfd = init_comm_socket(bind_port, &cliaddr);
+    sockfd = start_process(bind_port, &cliaddr);
 
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = INADDR_ANY;
@@ -824,15 +847,10 @@ int main(int argc, char* argv[])
     char in_buff[2 * MAXLINE], out_buff[MAXLINE] = "Ben bir eşşeğim.";
 	int len = 0;
 
-	/*
-	send_packet(sockfd, out_buff, &servaddr, &len);
-	printf("Client message sent: %s\n", out_buff);
-
-	recv_packet(sockfd, in_buff, &servaddr, &len);
-	printf("Client message received: %s\n", in_buff);
-	*/
 	reliable_data_transfer(sockfd, &servaddr ,in_buff, &len);
 
 	close(sockfd);
 	return 0;
 }
+
+
