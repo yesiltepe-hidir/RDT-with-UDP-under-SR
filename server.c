@@ -9,7 +9,7 @@
 #include <netinet/in.h>
 #include <sys/time.h>
 
-#define MAXLINE 1024
+#define MAXLINE 256
 #define WINDOW_SIZE 8
 #define TIME_OUT 100000
 
@@ -750,15 +750,9 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 					{
 						printf("%s", ack_cache[cache_index].payload);
 						cache_index++;
-						
-						if (cache_index == 2 * window.window_size)
-						{
-							//printf("Here\n");
-							memset(ack_cache, 0, sizeof(ack_cache));
-							cache_index = 0;
-						}
 
 					}
+
 
 
 
@@ -766,13 +760,32 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 								   (const struct sockaddr *)client_address, 
 								   sizeof(*client_address));
 
-					
-					if (receiving_packet->remained == 0)
+				if (ack_cache[0].remained + 1== cache_index)
 					{
 						//printf("\nHereee\n");
+						while (ack_cache[cache_index].is_ACKed)
+						{
+							printf("%s", ack_cache[cache_index].payload);
+							cache_index++;
+							
+							if (cache_index == 2 * window.window_size)
+							{
+								//printf("Here\n");
+								memset(ack_cache, 0, sizeof(ack_cache));
+								cache_index = 0;
+							}
+
+						}
+						
 						cache_index = 0;
 						memset(ack_cache, 0, sizeof(ack_cache));
+						ack_cache[0].remained = 0;
+						initialize_window(&window);
 					}
+
+			
+					
+					
 					
 				}
 				
@@ -816,6 +829,8 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 				
 
 			}
+
+		
 
 		}
 
@@ -892,6 +907,28 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 			}
 
 		}
+		if (ack_cache[0].remained + 1 == cache_index)
+					{
+						//printf("\nHereee\n");
+						while (ack_cache[cache_index].is_ACKed)
+						{
+							printf("%s", ack_cache[cache_index].payload);
+							cache_index++;
+							
+							if (cache_index == 2 * window.window_size)
+							{
+								//printf("Here\n");
+								memset(ack_cache, 0, sizeof(ack_cache));
+								cache_index = 0;
+							}
+
+						}
+						
+						cache_index = 0;
+						memset(ack_cache, 0, sizeof(ack_cache));
+						ack_cache[0].remained = 0;
+						initialize_window(&window);
+					}
 			
 	}
 
