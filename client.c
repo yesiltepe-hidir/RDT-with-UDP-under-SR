@@ -9,11 +9,11 @@
 #include <netinet/in.h>
 #include <sys/time.h>
 
-#define MAXLINE 1024
+#define MAXLINE 256
 #define WINDOW_SIZE 8
 #define TIME_OUT 100000
 
-int c = 2;
+
 // -----------------------------------------------------------------RDT 2.0 Utilities --------------------------------------------//
 int create_socket()
 {
@@ -29,9 +29,11 @@ int create_socket()
 
 void bind_socket(int sockfd, struct sockaddr_in* addr)
 {
-	int flag = bind(sockfd, (const struct sockaddr *) addr, sizeof(*addr));
+	
+	int bound = bind(sockfd, (const struct sockaddr *) addr, sizeof(*addr));
 
-	if (flag < 0)
+	
+	if (bound < 0)
 		printf("A problem occured at bind_socket.\n");
 
 	return;
@@ -39,12 +41,6 @@ void bind_socket(int sockfd, struct sockaddr_in* addr)
 
 int start_process(int port, struct sockaddr_in* addr)
 {
-
-	if(!addr)
-	{
-		printf("parameter addr is NULL.\n");
-		return -1;
-	}
 
 	int sockfd = create_socket();
 
@@ -57,95 +53,6 @@ int start_process(int port, struct sockaddr_in* addr)
 	return sockfd;
 }
 
-void recv_packet(int sockfd, char* buff, struct sockaddr_in* addr, int* len)
-{
-	
-	if(!addr)
-	{
-		printf("parameter addr is NULL.\n");
-		return;
-	}
-
-	int n = 0;
-
-	*len = sizeof(*addr);
-	n = recvfrom(sockfd, buff, MAXLINE, MSG_WAITALL, (struct sockaddr*) addr, len);
-	
-	buff[n] = '\0';
-
-	return;
-}
-
-void send_packet(int sockfd, char* buff, struct sockaddr_in* addr, int* len)
-{
-
-	if(!addr)
-	{
-		printf("parameter addr is NULL.\n");
-		return;
-	}
-
-	*len = sizeof(*addr);
-	sendto(sockfd, (const char*) buff, strlen(buff), MSG_CONFIRM, 
-		   (const struct sockaddr *) addr, *len);
-
-	return;
-}
-
-void read_text(int sockfd, char buff[MAXLINE], struct sockaddr_in* addr, int* len)
-{
-	int num_events = -1;
-	char temp = '\0';
-	struct pollfd pfds[2];
-
-	pfds[0].fd = sockfd;
-	pfds[0].events = POLLIN;
-
-	pfds[1].fd = STDIN_FILENO;
-	pfds[1].events = POLLIN;
-
-	while(1)
-	{
-
-		num_events = poll(pfds, 2, 2000);
-
-		if(num_events == 0)
-			continue;
-
-
-		int sock_flag = pfds[0].revents & POLLIN;
-		int stdio_flag = pfds[1].revents & POLLIN;
-
-		
-		if(stdio_flag)
-		{	
-			fgets(buff, MAXLINE, stdin);
-			send_packet(sockfd, buff, addr, len);
-			printf("Client message sent: %s\n", buff);
-			
-
-			temp = buff[4];
-			buff[4] = '\0';
-			if(!strcmp(buff, "BYE"))
-				break;
-			buff[4] = temp;
-		}
-
-		else if(sock_flag)
-		{
-			recv_packet(sockfd, buff, addr, len);
-			printf("Client message received: %s\n", buff);
-			
-			temp = buff[4];
-			buff[4] = '\0';
-			if(!strcmp(buff, "BYE"))
-				break;
-			buff[4] = temp;
-		}
-	}
-
-	return;
-}
 
 
 // -------------------------------------------------Reliable Data Transfer--------------------------------------------------------//
@@ -624,10 +531,12 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 								 (struct sockaddr *)client_address, &len);
 			
 
+			
 			if (strcmp(receiving_packet->payload, "BYE\n") == 0)
 			{
 				break;
 			}
+
 			// Check if data is garbled
 			int received_sqNo, recieved_checksum, packet_checksum;
 
@@ -672,15 +581,9 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 					{
 						printf("%s", ack_cache[cache_index].payload);
 						cache_index++;
-						
-						if (cache_index == 2 * window.window_size)
-						{
-							//printf("Here\n");
-							memset(ack_cache, 0, sizeof(ack_cache));
-							cache_index = 0;
-						}
 
 					}
+
 
 
 
@@ -688,13 +591,32 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 								   (const struct sockaddr *)client_address, 
 								   sizeof(*client_address));
 
-					
-					if (receiving_packet->remained == 0)
+				if (ack_cache[0].remained + 1== cache_index)
 					{
 						//printf("\nHereee\n");
+						while (ack_cache[cache_index].is_ACKed)
+						{
+							printf("%s", ack_cache[cache_index].payload);
+							cache_index++;
+							
+							if (cache_index == 2 * window.window_size)
+							{
+								//printf("Here\n");
+								memset(ack_cache, 0, sizeof(ack_cache));
+								cache_index = 0;
+							}
+
+						}
+						
 						cache_index = 0;
 						memset(ack_cache, 0, sizeof(ack_cache));
+						ack_cache[0].remained = 0;
+						initialize_window(&window);
 					}
+
+			
+					
+					
 					
 				}
 				
@@ -739,8 +661,10 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 			}
 
-			
+		
+
 		}
+
 
 
 		// -----------------------------------------------------Timeout-------------------------------------------------------//
@@ -760,7 +684,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 		|__________________|
 		
 	
-	*/	
+	*/
 		struct timeval current_time;
 
 		gettimeofday(&current_time, NULL);
@@ -771,7 +695,7 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 		
 		int temp_sent_chunks = total_send_packets;
 		
-		if (temp_sent_chunks && window.ack_cache[window.cache_index].is_ACKed == 0)
+		if (temp_sent_chunks && ack_cache[cache_index].is_ACKed == 0)
 		{
 			
 			start = window.window_size * 2 * window.pass + window.sequence_number;
@@ -813,16 +737,35 @@ void reliable_data_transfer(int sockfd, struct sockaddr_in* client_address, char
 
 			}
 
-
 		}
-			
+		if (ack_cache[0].remained + 1 == cache_index)
+					{
+						//printf("\nHereee\n");
+						while (ack_cache[cache_index].is_ACKed)
+						{
+							printf("%s", ack_cache[cache_index].payload);
+							cache_index++;
+							
+							if (cache_index == 2 * window.window_size)
+							{
+								//printf("Here\n");
+								memset(ack_cache, 0, sizeof(ack_cache));
+								cache_index = 0;
+							}
 
+						}
+						
+						cache_index = 0;
+						memset(ack_cache, 0, sizeof(ack_cache));
+						ack_cache[0].remained = 0;
+						initialize_window(&window);
+					}
+			
 	}
 
 	return;
 
 }
-
 
 
 
@@ -833,7 +776,7 @@ int main(int argc, char* argv[])
 	char *ip_str = argv[1];
 	int send_port = atoi(argv[2]), bind_port = atoi(argv[3]);
 
-	printf("SEND: %d, BIND: %d, ip_str: %s\n", send_port, bind_port, ip_str);
+	printf("SEND: %d, BIND: %d, IP: %s\n", send_port, bind_port, ip_str);
 
 	memset(&servaddr, 0, sizeof(servaddr));
     memset(&cliaddr, 0, sizeof(cliaddr));
@@ -844,7 +787,7 @@ int main(int argc, char* argv[])
     servaddr.sin_addr.s_addr = INADDR_ANY;
     servaddr.sin_port = htons(send_port);
 
-    char in_buff[2 * MAXLINE], out_buff[MAXLINE] = "Ben bir eşşeğim.";
+    char in_buff[2 * MAXLINE];
 	int len = 0;
 
 	reliable_data_transfer(sockfd, &servaddr ,in_buff, &len);
